@@ -11,6 +11,7 @@ import json
 import re
 import sys
 from collections import Counter
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote_plus, unquote_plus
 
 import yaml
@@ -418,9 +419,66 @@ def to_json_line(value):
     return (json.dumps(value, ensure_ascii=True, separators=(",", ":")) + "\n").encode("ascii")
 
 
+def make_handler(rules):
+    """Build the HTTP handler class. It uses the rules loaded at startup."""
+
+    class RedactHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            # The server only starts if the rules loaded, so "running" = "healthy".
+            if self.path == "/healthz":
+                self.send_text(200, "ok\n")
+            else:
+                self.send_text(404, "not found\n")
+
+        def do_POST(self):
+            if self.path != "/redact":
+                self.send_text(404, "not found\n")
+                return
+            length = self.headers.get("Content-Length")
+            if length is None or not length.isdigit():
+                self.send_text(411, "Content-Length required\n")
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.end_headers()
+            # Read and answer one line at a time: the body is never held in memory.
+            remaining = int(length)
+            counts = Counter()
+            line_no = 0
+            while remaining > 0:
+                raw = self.rfile.readline(remaining)
+                if not raw:
+                    break  # the client closed the connection early
+                remaining -= len(raw)
+                line_no += 1
+                out, error = process_line(raw, line_no, rules, counts)
+                if error:
+                    print(f"warning: request line {line_no}: {error}", file=sys.stderr)
+                if out is not None:
+                    self.wfile.write(out)
+
+        def send_text(self, status, text):
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(text.encode("ascii"))
+
+    return RedactHandler
+
+
+def serve(addr, rules):
+    host, _, port = addr.rpartition(":")  # ":8080" -> all interfaces, port 8080
+    server = ThreadingHTTPServer((host, int(port)), make_handler(rules))
+    print(f"listening on {addr}", file=sys.stderr)
+    server.serve_forever()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Redact sensitive data from NDJSON logs.")
     parser.add_argument("--rules", default="rules.yaml", help="rules YAML file (default: rules.yaml)")
+    parser.add_argument("--serve", action="store_true", help="run as an HTTP service")
+    parser.add_argument("--addr", default=":8080", help="address to listen on (default: :8080)")
     parser.add_argument("input_file", nargs="?", help="NDJSON file to read (default: stdin)")
     args = parser.parse_args()
 
@@ -431,6 +489,10 @@ def main():
     except RulesError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(2)
+
+    if args.serve:
+        serve(args.addr, rules)
+        return
 
     # Work with bytes, not text, so binary-looking or invalid UTF-8 lines never crash us.
     if args.input_file:

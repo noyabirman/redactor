@@ -18,6 +18,13 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **Card pattern allows one space or dash between digits** (`4111 1111 1111 1111`, `5555-5555-5555-4444`). Luhn still filters random numbers.
 - **The `settings` block in rules.yaml is not read yet.** `****`, keep 4 and `*` are constants in the code (same values). To do.
 
+## Service mode
+- **Python's built-in `http.server` (`ThreadingHTTPServer`), no web framework.** No new dependencies and full control over streaming; not as production-hardened as a real framework.
+- **If the rules can't be loaded, the server doesn't start** (exit 2, same as the CLI). There is never a moment where traffic could pass through unredacted; Kubernetes sees the pod fail.
+- **`GET /healthz` returns 200 `ok` while the server runs.** Since it can't run without valid rules, "running" means "rules loaded". Used for both liveness and readiness.
+- **`/redact` reads and answers one line at a time** with the same `process_line` as the CLI, so both modes give identical output.
+- **The response status (200) is sent before the body is read,** so a bad line can't change it later; bad lines get the usual placeholder.
+
 ## Bad lines
 - **A line that can't be parsed becomes a placeholder:** `{"_redactor_error":"invalid_json","line":20}`. Printing it as-is could leak data (line 20 has a truncated JWT, line 50 an email); dropping it silently hides the problem. The line number lets you find it in the original file. (Input lines 20, 21, 50.)
 - **Blank lines are skipped** (lines 19, 22), as is usual for NDJSON.
