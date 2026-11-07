@@ -11,6 +11,7 @@ import json
 import re
 import sys
 from collections import Counter
+from urllib.parse import quote_plus, unquote_plus
 
 import yaml
 
@@ -261,6 +262,68 @@ def redact_value(value, scope, rules, counts):
     return value
 
 
+# name=value pairs joined by "&", with no spaces, e.g. "email=a%40b.com&password=x".
+FORM_RE = re.compile(r"[^=&\s]+=[^&\s]*(?:&[^=&\s]+=[^&\s]*)*")
+
+
+def redact_body(body, rules, counts):
+    """Redact a request or response body.
+
+    A body can be JSON (already parsed), or a string. A string body can hold
+    JSON, form-encoded data, or plain text, and each is handled differently.
+    We look at the content itself and not at the Content-Type header, so a
+    wrong or missing header can't make us skip redaction.
+    """
+    if not isinstance(body, str):
+        return redact_value(body, "body", rules, counts)
+
+    # 1. JSON inside a string, e.g. "{\"token\":\"abc\"}".
+    if body.lstrip().startswith(("{", "[")):
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, (dict, list)):
+            redacted = redact_value(parsed, "body", rules, counts)
+            # Give it back as a string, so the field keeps its original type.
+            return json.dumps(redacted, ensure_ascii=True, separators=(",", ":"))
+
+    # 2. Form-encoded, e.g. "email=a%40b.com&password=x".
+    if FORM_RE.fullmatch(body):
+        return redact_form(body, rules, counts)
+
+    # 3. Anything else (plain text, HTML, binary-looking data): value rules only.
+    return apply_value_rules(body, rules, counts)
+
+
+def redact_form(body, rules, counts):
+    """Redact a form-encoded body: key rules on names, value rules on values."""
+    result = []
+    for pair in body.split("&"):
+        raw_name, _, raw_value = pair.partition("=")
+        # Decode first: "bob%40example.com" must become "bob@example.com"
+        # or the email pattern won't see it.
+        name = unquote_plus(raw_name)
+        value = unquote_plus(raw_value)
+
+        rule = find_key_rule(rules, name, "body")
+        if rule is not None:
+            counts[rule["name"]] += 1
+            if rule["action"] == "remove":
+                continue
+            new_value = apply_action(rule["action"], value)
+        else:
+            new_value = apply_value_rules(value, rules, counts)
+
+        if new_value == value:
+            # Nothing to hide: keep the pair exactly as it was.
+            result.append(pair)
+        else:
+            # Encode again. "*" and ":" stay readable ("****", "sha256:...").
+            result.append(raw_name + "=" + quote_plus(new_value, safe="*:"))
+    return "&".join(result)
+
+
 def redact_record(record, rules, counts):
     """Redact one parsed line, using the right scope for each part of it."""
     if not isinstance(record, dict):
@@ -272,7 +335,7 @@ def redact_record(record, rules, counts):
         if key == "headers":
             result[key] = redact_value(item, "headers", rules, counts)
         elif key == "body":
-            result[key] = redact_value(item, "body", rules, counts)
+            result[key] = redact_body(item, rules, counts)
         elif key == "response" and isinstance(item, dict):
             # The response has its own headers and body.
             result[key] = redact_record(item, rules, counts)
