@@ -6,4 +6,3 @@ __pycache__
 tests
 *.md
 input.ndjson
-download
