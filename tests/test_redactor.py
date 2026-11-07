@@ -1,6 +1,8 @@
+import http.client
 import json
 import subprocess
 import sys
+import threading
 from collections import Counter
 
 import pytest
@@ -313,3 +315,49 @@ def test_path_without_query_string_is_unchanged():
 
 def test_query_string_redaction_is_idempotent():
     assert_idempotent({"path": "/v1/reset?token=abc&email=gina%40example.com"})
+
+
+# ---- Service mode ----
+
+
+@pytest.fixture
+def server():
+    """Start the HTTP server on a free port in a background thread."""
+    srv = redactor.ThreadingHTTPServer(("127.0.0.1", 0), redactor.make_handler(RULES))
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+    srv.shutdown()
+
+
+def test_healthz_returns_ok(server):
+    server.request("GET", "/healthz")
+    response = server.getresponse()
+    assert (response.status, response.read()) == (200, b"ok\n")
+
+
+def test_redact_endpoint_gives_same_output_as_cli(server):
+    with open("input.ndjson", "rb") as f:
+        body = f.read()
+    server.request("POST", "/redact", body=body)
+    response = server.getresponse()
+    assert response.status == 200
+    assert response.read() == run_cli("input.ndjson").stdout
+
+
+def test_unknown_path_returns_404(server):
+    server.request("POST", "/nope", body=b"{}")
+    assert server.getresponse().status == 404
+
+
+def test_body_without_content_length_is_rejected(server):
+    # Send only the headers of a chunked upload (no Content-Length), then read the reply.
+    server.putrequest("POST", "/redact")
+    server.putheader("Transfer-Encoding", "chunked")
+    server.endheaders()
+    assert server.getresponse().status == 411
+
+
+def test_server_does_not_start_with_bad_rules():
+    result = run_cli("--serve", "--addr", "127.0.0.1:0", "--rules", "does-not-exist.yaml")
+    assert result.returncode == 2

@@ -23,6 +23,7 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **If the rules can't be loaded, the server doesn't start** (exit 2, same as the CLI). There is never a moment where traffic could pass through unredacted; Kubernetes sees the pod fail.
 - **`GET /healthz` returns 200 `ok` while the server runs.** Since it can't run without valid rules, "running" means "rules loaded". Used for both liveness and readiness.
 - **`/redact` reads and answers one line at a time** with the same `process_line` as the CLI, so both modes give identical output.
+- **Chunked uploads (no Content-Length) are rejected with 411, not supported.** The body is already streamed line by line, which is what the brief asks; time went to deployment files instead. Limitation: the 411 is sent without reading the body, so a client still sending may see a connection reset instead of the 411.
 - **The response status (200) is sent before the body is read,** so a bad line can't change it later; bad lines get the usual placeholder.
 
 ## Bad lines
