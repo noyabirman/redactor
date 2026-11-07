@@ -5,6 +5,7 @@ can't be parsed with a safe placeholder record.
 """
 
 import argparse
+import hashlib
 import json
 import sys
 
@@ -48,6 +49,41 @@ def load_rules(path):
                 )
 
     return rules
+
+
+MASK = "****"
+KEEP_LAST = 4
+FILL = "*"
+HASH_PREFIX = "sha256:"
+
+
+def apply_action(action, value):
+    """Return the new value after applying the action.
+
+    'remove' is not handled here: it deletes the key itself, so the code
+    that walks over the dict takes care of it.
+    """
+    # Values can also be numbers (e.g. "card_number": 4111111111111111).
+    text = str(value)
+
+    if action == "mask":
+        return MASK
+
+    elif action == "partial":
+        # Too short to keep 4 characters without revealing the whole value:
+        # mask all of it.
+        if len(text) <= KEEP_LAST:
+            return FILL * len(text)
+        return FILL * (len(text) - KEEP_LAST) + text[-KEEP_LAST:]
+
+    elif action == "hash":
+        # Already hashed (we are running on our own output): leave it alone,
+        # so running the tool twice gives the same result.
+        if text.startswith(HASH_PREFIX):
+            return text
+        return HASH_PREFIX + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    raise ValueError(f"apply_action does not handle action {action!r}")
 
 
 def process_line(raw, line_no):
