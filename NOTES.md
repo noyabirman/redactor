@@ -33,6 +33,13 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **Dependencies are installed before the code is copied,** so changing `redactor.py` doesn't reinstall them (Docker layer cache).
 - **Default `rules.yaml` is in the image at `/etc/redactor/rules.yaml`;** in Kubernetes a ConfigMap replaces it, so rules change without rebuilding the image.
 
+- **One Kubernetes file `k8s/redactor.yaml`: ConfigMap + Deployment + Service.** Minimal on purpose; no HPA or NetworkPolicy.
+- **The ConfigMap holds a copy of rules.yaml, and a test fails if they differ,** so production can't silently run old rules.
+- **Image `redactor:latest` with `imagePullPolicy: IfNotPresent`** so it works with a local cluster (kind). Production needs a registry and a fixed version tag.
+- **2 replicas; readiness and liveness probes both on `/healthz`.** Readiness = may receive traffic, liveness = doesn't need a restart.
+- **Hardened container:** non-root, no privilege escalation, read-only root filesystem, all Linux capabilities dropped.
+- **Rules are read only at startup;** after changing the ConfigMap, `kubectl rollout restart` (no hot reload).
+
 ## Bad lines
 - **A line that can't be parsed becomes a placeholder:** `{"_redactor_error":"invalid_json","line":20}`. Printing it as-is could leak data (line 20 has a truncated JWT, line 50 an email); dropping it silently hides the problem. The line number lets you find it in the original file. (Input lines 20, 21, 50.)
 - **Blank lines are skipped** (lines 19, 22), as is usual for NDJSON.

@@ -1,0 +1,142 @@
+# Redactor service: rules (ConfigMap), pods (Deployment), and an internal address (Service).
+# Apply with: kubectl apply -f k8s/redactor.yaml
+
+# The rules file. It must stay identical to ../rules.yaml (a test checks this).
+# Pods read it only at startup: after changing it, run
+#   kubectl rollout restart deployment/redactor
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redactor-rules
+data:
+  rules.yaml: |
+    # Redaction rules for API traffic logs.
+    version: 1
+
+    settings:
+      mask:    { replacement: "****" }
+      partial: { keep_last: 4, fill: "*" }
+      hash:    { algorithm: sha256 }
+
+    # key_rules match on the NAME of a JSON key or HTTP header.
+    #   scope: headers | body | any
+    #   match: either { exact: [names...] } or { regex: "..." }
+    key_rules:
+      - name: auth-headers
+        scope: headers
+        match:
+          exact: [Authorization, Proxy-Authorization, X-Auth-Token, Cookie, Set-Cookie]
+        action: mask
+
+      - name: api-key-names
+        scope: any
+        match:
+          regex: '(?i)^(x-)?api[_-]?key$'
+        action: hash
+
+      - name: secret-fields
+        scope: body
+        match:
+          regex: '(?i)^(password|passwd|pwd|secret|client_secret|token)$'
+        action: mask
+
+      - name: card-number-fields
+        scope: body
+        match:
+          regex: '(?i)^(card_?number|pan)$'
+        action: partial
+
+      - name: cvv-fields
+        scope: body
+        match:
+          regex: '(?i)^(cvv|cvc|cvv2)$'
+        action: remove
+
+    # value_rules match on the CONTENT of any string value, whatever its key is called.
+    #   validator (optional): the match only counts if the validator accepts it. Supported: luhn
+    value_rules:
+      - name: email
+        pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+        action: hash
+
+      - name: jwt
+        # JWTs use base64url (RFC 7515), whose special characters are "-" and "_",
+        # not "+" and "/". The original pattern missed JWTs containing "-" or "_",
+        # and cut some off in the middle, leaking the end of the signature.
+        # "+/=" are kept in case a non-standard token uses plain base64.
+        pattern: 'eyJ[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]*'
+        action: mask
+
+      - name: credit-card
+        # Cards are often written in groups: "4111 1111 1111 1111", "5555-5555-5555-4444",
+        # "3782 822463 10005". Allow one space or dash between digits.
+        # The Luhn validator still rejects random numbers.
+        pattern: '\b\d(?:[ -]?\d){12,18}\b'
+        validator: luhn
+        action: partial
+
+      - name: api-key-prefix
+        pattern: '\bsk_(?:live|test)_[A-Za-z0-9]+\b'
+        action: mask
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redactor
+spec:
+  replicas: 2                      # two pods, so one can restart without downtime
+  selector:
+    matchLabels:
+      app: redactor
+  template:
+    metadata:
+      labels:
+        app: redactor
+    spec:
+      containers:
+        - name: redactor
+          # Local image (e.g. loaded into kind). In production: a registry and a fixed version tag.
+          image: redactor:latest
+          imagePullPolicy: IfNotPresent
+          args: ["--serve", "--addr", ":8080", "--rules", "/etc/redactor/rules.yaml"]
+          ports:
+            - name: http
+              containerPort: 8080
+          # Ready = may get traffic. Alive = doesn't need a restart. Both use /healthz.
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }    # what the scheduler reserves
+            limits: { cpu: 500m, memory: 256Mi }     # the most it may use
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - name: rules
+              mountPath: /etc/redactor     # replaces the default rules from the image
+              readOnly: true
+      volumes:
+        - name: rules
+          configMap:
+            name: redactor-rules
+---
+# A fixed address inside the cluster (http://redactor) that spreads requests over the pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redactor
+spec:
+  selector:
+    app: redactor
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

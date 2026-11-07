@@ -6,6 +6,7 @@ import threading
 from collections import Counter
 
 import pytest
+import yaml
 
 import redactor
 
@@ -361,3 +362,14 @@ def test_body_without_content_length_is_rejected(server):
 def test_server_does_not_start_with_bad_rules():
     result = run_cli("--serve", "--addr", "127.0.0.1:0", "--rules", "does-not-exist.yaml")
     assert result.returncode == 2
+
+
+# ---- Deployment files ----
+
+
+def test_kubernetes_configmap_has_the_same_rules_as_rules_yaml():
+    with open("k8s/redactor.yaml") as f:
+        objects = list(yaml.safe_load_all(f))
+    configmap = next(o for o in objects if o["kind"] == "ConfigMap")
+    with open("rules.yaml") as f:
+        assert configmap["data"]["rules.yaml"] == f.read()
