@@ -369,10 +369,25 @@ def process_line(raw, line_no, rules, counts):
         record = json.loads(text)
     except json.JSONDecodeError:
         return placeholder(line_no, "invalid_json"), "invalid JSON"
+    except RecursionError:
+        return placeholder(line_no, "too_deep"), "JSON nested too deeply"
 
-    record = redact_record(record, rules, counts)
+    # Count into a separate Counter and add it to the totals only if the
+    # whole line succeeds, so a failed line doesn't leave half its counts behind.
+    line_counts = Counter()
+    try:
+        output = to_json_line(redact_record(record, rules, line_counts))
+    except RecursionError:
+        # Our redaction is recursive; Python stops at about 1000 levels.
+        return placeholder(line_no, "too_deep"), "JSON nested too deeply"
+    except Exception as e:
+        # Safety net: a bug in our code must not crash the whole run or let
+        # the line through unredacted. Only the error TYPE is reported,
+        # because the message could contain the data.
+        return placeholder(line_no, "internal_error"), f"internal error ({type(e).__name__})"
 
-    return to_json_line(record), None
+    counts.update(line_counts)
+    return output, None
 
 
 def placeholder(line_no, reason):

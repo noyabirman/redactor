@@ -1,5 +1,9 @@
 import json
+import subprocess
+import sys
 from collections import Counter
+
+import pytest
 
 import redactor
 
@@ -115,3 +119,178 @@ def test_binary_looking_body_does_not_crash():
 def test_string_bodies_are_idempotent():
     assert_idempotent({"body": "email=bob%40example.com&password=hunter2"})
     assert_idempotent({"response": {"body": '{"token":"abc","email":"a@b.com"}'}})
+
+
+# ---- Key rules ----
+
+
+def test_header_names_are_case_insensitive():
+    headers = {"authorization": "Bearer x", "AUTHORIZATION": "y", "x-API-key": "k"}
+    result = redact({"headers": headers})["headers"]
+    assert result["authorization"] == "****"
+    assert result["AUTHORIZATION"] == "****"
+    assert result["x-API-key"].startswith("sha256:")
+
+
+def test_scope_headers_rule_does_not_apply_to_body():
+    # auth-headers has scope: headers, so a body field with that name stays.
+    result = redact({"body": {"Authorization": "not a header", "password": "x"}})
+    assert result["body"] == {"Authorization": "not a header", "password": "****"}
+
+
+def test_scope_body_rule_applies_to_response_body_too():
+    result = redact({"response": {"body": {"password": "x"}}})
+    assert result["response"]["body"] == {"password": "****"}
+
+
+def test_remove_drops_the_key():
+    result = redact({"body": {"card": {"number": "x", "cvv": "123", "CVC": "1"}}})
+    assert result["body"]["card"] == {"number": "x"}
+
+
+def test_nested_objects_and_arrays_are_redacted():
+    record = {"body": {"a": [{"b": [{"password": "x"}, {"email": "a@b.com"}]}]}}
+    result = redact(record)["body"]["a"][0]["b"]
+    assert result[0] == {"password": "****"}
+    assert result[1]["email"].startswith("sha256:")
+
+
+def test_rule_on_a_list_value_redacts_every_item():
+    result = redact({"response": {"headers": {"Set-Cookie": ["a=1", "b=2"]}}})
+    assert result["response"]["headers"]["Set-Cookie"] == ["****", "****"]
+
+
+def test_null_stays_null_and_numbers_are_redacted():
+    result = redact({"body": {"password": None, "card_number": 4111111111111111}})
+    assert result["body"] == {"password": None, "card_number": "************1111"}
+
+
+def test_first_matching_rule_wins():
+    # "X-Api-Key" matches api-key-names (hash) before anything else.
+    result = redact({"headers": {"X-Api-Key": "k"}})
+    assert result["headers"]["X-Api-Key"].startswith("sha256:")
+
+
+# ---- Actions ----
+
+
+def test_partial_masks_short_values_completely():
+    assert redactor.apply_action("partial", "123") == "***"
+    assert redactor.apply_action("partial", "1234") == "****"
+    assert redactor.apply_action("partial", "12345") == "*2345"
+
+
+def test_hash_is_stable_and_idempotent():
+    first = redactor.apply_action("hash", "secret")
+    assert first == redactor.apply_action("hash", "secret")
+    assert redactor.apply_action("hash", first) == first
+
+
+def test_email_is_replaced_inside_text_only():
+    result = redact({"body": {"note": "mail a@b.com now"}})["body"]["note"]
+    assert result.startswith("mail sha256:") and result.endswith(" now")
+
+
+# ---- Bad and unusual lines ----
+
+
+def run_line(raw):
+    return redactor.process_line(raw, 7, RULES, Counter())
+
+
+def test_invalid_json_gives_placeholder_without_the_data():
+    out, error = run_line(b'{"email":"trunc@exam')
+    assert json.loads(out) == {"_redactor_error": "invalid_json", "line": 7}
+    assert b"trunc" not in out
+    assert error == "invalid JSON"
+
+
+def test_invalid_utf8_gives_placeholder():
+    out, error = run_line(b'{"a":"\xff\xfe"}\n')
+    assert json.loads(out)["_redactor_error"] == "invalid_utf8"
+
+
+def test_blank_line_is_skipped():
+    assert run_line(b"   \n") == (None, None)
+
+
+def test_non_object_json_is_still_redacted():
+    out, _ = run_line(b'["a@b.com", 42]')
+    result = json.loads(out)
+    assert result[0].startswith("sha256:") and result[1] == 42
+
+
+def test_deeply_nested_json_gives_placeholder_instead_of_crashing():
+    for depth in (5000, 100000):
+        out, error = run_line(b'{"body":' + b"[" * depth + b"]" * depth + b"}")
+        assert json.loads(out)["_redactor_error"] == "too_deep"
+
+
+# ---- Rules file ----
+
+
+
+def write_rules(tmp_path, text):
+    path = tmp_path / "rules.yaml"
+    path.write_text(text)
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "key_rules: [\n",  # not valid YAML
+        "- a\n- b\n",  # not a mapping
+        "key_rules:\n  - name: x\n    match: {regex: '(abc'}\n    action: mask\n",
+        "key_rules:\n  - name: x\n    match: {exact: [a]}\n    action: delete\n",
+        "key_rules:\n  - name: x\n    match: {}\n    action: mask\n",
+        "key_rules:\n  - name: x\n    match: {exact: [a]}\n    scope: query\n    action: mask\n",
+        "value_rules:\n  - name: x\n    pattern: '[a'\n    action: mask\n",
+        "value_rules:\n  - name: x\n    pattern: 'a'\n    validator: iban\n    action: mask\n",
+    ],
+)
+def test_invalid_rules_are_rejected(tmp_path, text):
+    with pytest.raises(redactor.RulesError):
+        redactor.load_rules(write_rules(tmp_path, text))
+
+
+def test_missing_rules_file_is_rejected(tmp_path):
+    with pytest.raises(redactor.RulesError):
+        redactor.load_rules(str(tmp_path / "nope.yaml"))
+
+
+# ---- The whole program (CLI) ----
+
+
+
+def run_cli(*args, stdin=b""):
+    return subprocess.run(
+        [sys.executable, "redactor.py", *args], input=stdin, capture_output=True
+    )
+
+
+def test_cli_does_not_output_anything_when_rules_are_bad():
+    result = run_cli("--rules", "does-not-exist.yaml", stdin=b'{"password":"x"}\n')
+    assert result.returncode == 2
+    assert result.stdout == b""
+
+
+def test_cli_reads_stdin_and_file_the_same_way():
+    with open("input.ndjson", "rb") as f:
+        from_stdin = run_cli(stdin=f.read())
+    from_file = run_cli("input.ndjson")
+    assert from_stdin.stdout == from_file.stdout
+
+
+def test_cli_never_writes_sensitive_data_to_stderr():
+    stderr = run_cli("input.ndjson").stderr.decode()
+    assert "@" not in stderr
+    assert "eyJ" not in stderr
+    assert "4111" not in stderr
+    assert "redactions per rule:" in stderr
+
+
+def test_cli_output_is_idempotent_on_sample_input():
+    once = run_cli("input.ndjson").stdout
+    twice = run_cli(stdin=once).stdout
+    assert once == twice
