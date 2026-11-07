@@ -53,8 +53,29 @@ def load_rules(path):
                 )
             if section == "key_rules":
                 prepare_key_rule(rule)
+            else:
+                prepare_value_rule(rule)
 
     return rules
+
+
+VALIDATORS = {"luhn"}
+
+
+def prepare_value_rule(rule):
+    """Check a value rule and compile its pattern into rule["_regex"]."""
+    name = rule["name"]
+    pattern = rule.get("pattern")
+    if not isinstance(pattern, str) or not pattern:
+        raise RulesError(f"value rule '{name}' needs a 'pattern'")
+    try:
+        rule["_regex"] = re.compile(pattern)
+    except re.error as e:
+        raise RulesError(f"value rule '{name}' has an invalid pattern: {e}")
+
+    validator = rule.get("validator")
+    if validator is not None and validator not in VALIDATORS:
+        raise RulesError(f"value rule '{name}' has unknown validator {validator!r}")
 
 
 def prepare_key_rule(rule):
@@ -149,6 +170,47 @@ def apply_action(action, value):
     raise ValueError(f"apply_action does not handle action {action!r}")
 
 
+def luhn_valid(text):
+    """True if the digits in text pass the Luhn checksum (used by card numbers).
+
+    Spaces and dashes are ignored, so "4111 1111 1111 1111" works too.
+    From the right: double every second digit (subtract 9 if the result is
+    over 9), add everything up, and the total must end in 0.
+    """
+    digits = [int(c) for c in text if c in "0123456789"]
+    if len(digits) < 13:
+        return False
+    total = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def apply_value_rules(text, rules, counts):
+    """Redact every part of a string that matches a value rule.
+
+    Only the matched part changes: "mail a@b.com now" -> "mail sha256:... now".
+    """
+    for rule in rules.get("value_rules", []):
+
+        def replace(match):
+            found = match.group(0)
+            if rule.get("validator") == "luhn" and not luhn_valid(found):
+                return found  # looks like a card number but isn't one: keep it
+            counts[rule["name"]] += 1
+            if rule["action"] == "remove":
+                return ""
+            return apply_action(rule["action"], found)
+
+        # sub() calls replace() for every match and puts its result in place.
+        text = rule["_regex"].sub(replace, text)
+    return text
+
+
 def apply_to_leaves(action, value):
     """Apply an action to a value that may be a dict or a list.
 
@@ -191,8 +253,11 @@ def redact_value(value, scope, rules, counts):
     if isinstance(value, list):
         return [redact_value(item, scope, rules, counts) for item in value]
 
-    # A string, number, true/false or null. value_rules will be applied here
-    # in the next step.
+    if isinstance(value, str):
+        # value_rules have no scope: they apply to every string, wherever it is.
+        return apply_value_rules(value, rules, counts)
+
+    # A number, true/false or null: nothing to search in.
     return value
 
 
