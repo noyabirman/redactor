@@ -31,7 +31,23 @@ pytest            # or: python -m pytest -v
 The tests use the real `rules.yaml`, so a mistake in the rules file makes them fail too.
 
 ### Service mode
-In process.........
+```sh
+python redactor.py --serve --addr :8080 --rules rules.yaml
+curl --data-binary @input.ndjson localhost:8080/redact     # redacted NDJSON back
+curl localhost:8080/healthz                                 # "ok"
+```
+- `POST /redact`: NDJSON in, redacted NDJSON out. The body is read, redacted and written
+  back **one line at a time**, never held in memory as a whole. Needs a `Content-Length`.
+- `GET /healthz`: `200 ok` while the server runs. The server **doesn't start** if the rules
+  can't be loaded (exit code 2), so "running" also means "rules loaded". It is used for both
+  the Kubernetes readiness and liveness probes.
+
+### Docker
+```sh
+docker build -t redactor .
+docker run --rm -p 8080:8080 redactor                                     # service mode
+docker run --rm -i redactor --rules /etc/redactor/rules.yaml < input.ndjson  # CLI
+```
 
 ## 2. Design decisions and trade-offs
 
@@ -98,7 +114,35 @@ eyJ[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]*
 from 2 to 4, and the output contains no `eyJ` at all.
 
 ## 4. Deployment files
-Not done yet.
+
+**[`Dockerfile`](Dockerfile)**
+- `python:3.12.7-slim-bookworm`, pinned to an exact version so builds are repeatable. Small and
+  familiar, with a shell for debugging (distroless would be smaller but harder to debug).
+- Dependencies are installed before the code is copied, so a code change doesn't reinstall them.
+- Only `pyyaml` goes into the image (`pytest` is in `requirements-dev.txt`).
+- Runs as a non-root user (uid 10001). Service mode by default; other arguments run the CLI.
+
+**[`k8s/redactor.yaml`](k8s/redactor.yaml)**: three objects, kept minimal on purpose.
+- **ConfigMap** with the rules, mounted at `/etc/redactor/rules.yaml`, so rules change without a
+  new image. It's a copy of `rules.yaml`, and a test fails if the two differ.
+- **Deployment** with 2 replicas (one can restart without downtime), readiness and liveness probes
+  on `/healthz`, CPU/memory requests and limits, and a locked-down container: non-root, read-only
+  filesystem, no privilege escalation, all Linux capabilities dropped.
+- **Service**: a stable address (`http://redactor`) inside the cluster.
+
+If the ConfigMap has broken rules, new pods exit and never become ready, while the old pods keep
+running with the old rules. So a bad rules change can't let traffic through unredacted.
+
+To try it locally with [kind](https://kind.sigs.k8s.io):
+```sh
+kind create cluster
+docker build -t redactor . && kind load docker-image redactor
+kubectl apply -f k8s/redactor.yaml
+kubectl port-forward service/redactor 8080:80
+```
+The image is `redactor:latest` so this works without a registry. In production it would come from
+a registry with a fixed version tag. I built and ran the image with Docker, but didn't run the
+manifest on a real cluster.
 
 ## 5. Known limitations and what I'd do with more time
 
@@ -115,6 +159,9 @@ Not done yet.
 | Output is re-serialized: `10.50` -> `10.5`, non-ASCII as `\uXXXX`, duplicate keys keep the last value. Same data, different text. | Rewrite only the matched spans of the original text. |
 | JSON deeper than ~1000 levels gets a placeholder (recursion limit). | An explicit stack instead of recursion. |
 | One line at a time, one CPU core. | A worker pool that keeps the output order (bonus in the brief). |
+| The service needs `Content-Length`; chunked uploads get `411`. The 411 is sent without reading the body, so a client that is still sending may see a connection reset instead. | Read chunked bodies line by line too. |
+| Rules are read only at startup. After changing the ConfigMap: `kubectl rollout restart deployment/redactor`. | Hot reload of the rules file (bonus in the brief). |
+| The service doesn't log per-request redaction counts, and there are no metrics. | Prometheus metrics per rule (bonus in the brief). |
 
 ## 6. Inline on live traffic with a sub-millisecond budget
 

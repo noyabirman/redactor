@@ -38,6 +38,7 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **Image `redactor:latest` with `imagePullPolicy: IfNotPresent`** so it works with a local cluster (kind). Production needs a registry and a fixed version tag.
 - **2 replicas; readiness and liveness probes both on `/healthz`.** Readiness = may receive traffic, liveness = doesn't need a restart.
 - **Hardened container:** non-root, no privilege escalation, read-only root filesystem, all Linux capabilities dropped.
+- **The README says plainly that the image was run with Docker but the manifest wasn't run on a cluster.** The brief values honest "not done" over claimed features.
 - **Rules are read only at startup;** after changing the ConfigMap, `kubectl rollout restart` (no hot reload).
 
 ## Bad lines
