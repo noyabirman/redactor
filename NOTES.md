@@ -8,6 +8,8 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **Recursion, not an explicit stack.** Shorter and easier to read; the ~1000-level limit is handled with a `too_deep` placeholder.
 - **Read input as bytes, line by line.** Invalid UTF-8 can't crash the decoder, and memory is O(longest line), not O(file). Time is O(input size x number of rules).
 
+- **Sub-millisecond answer: prefer moving redaction off the request path** (async queue) before optimizing it; if inline, compiled language, one-pass matching, no re-serialize, hard budget.
+
 ## Rules file
 - **Rules are loaded and checked before reading any input (fail closed).** Missing file, bad YAML, unknown action/scope/validator or a broken regex -> exit code 2 and nothing on stdout. Traffic is never passed through unredacted.
 - **`yaml.safe_load`, not `yaml.load`.** It only builds plain types, so a malicious rules file can't create Python objects.

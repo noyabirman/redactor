@@ -96,3 +96,35 @@ eyJ[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]*
 **How I checked.** I wrote the tests first and they failed on the old pattern
 (`'****_adQssw5c' == '****'`). They pass with the new one. On `input.ndjson` the `jwt` count went
 from 2 to 4, and the output contains no `eyJ` at all.
+
+## 4. Deployment files
+Not done yet.
+
+## 5. Known limitations and what I'd do with more time
+
+| Limitation | With more time |
+|---|---|
+| `hash` is plain SHA-256, so known values (e.g. a list of emails) can be hashed and compared. | HMAC-SHA-256 with a secret key from a Kubernetes Secret. |
+| About 10% of random numbers pass Luhn, so some 13-19 digit IDs get redacted. This errs on the safe side, on purpose. | Also require a known card prefix (BIN range), or a card-like key or word nearby. |
+| A card followed by more digits (`4111 1111 1111 1111 123`) is matched as one number, fails Luhn and stays visible. Only one space or dash between digits. | When a match fails Luhn, also try the shorter matches inside it. |
+| Value rules only scan strings. A card stored as a JSON number under an unknown key name is not found. | Also scan integers of 13-19 digits. |
+| `password: hunter2` inside free text is not caught (key rules need a key/value structure). | Value rules for `name: value` / `name=value` patterns of secret key names. |
+| JSON and form detection only applies to `body` fields and the query string, not to other strings. | Try it on every string that starts with `{` or `[`, measuring the cost. |
+| The `settings` block in `rules.yaml` is not read; `****`, keep 4 and `*` are constants with the same values. | Read them in `load_rules`. |
+| A single very long line is loaded into memory as a whole. | A maximum line size; longer lines get a placeholder. |
+| Output is re-serialized: `10.50` -> `10.5`, non-ASCII as `\uXXXX`, duplicate keys keep the last value. Same data, different text. | Rewrite only the matched spans of the original text. |
+| JSON deeper than ~1000 levels gets a placeholder (recursion limit). | An explicit stack instead of recursion. |
+| One line at a time, one CPU core. | A worker pool that keeps the output order (bonus in the brief). |
+
+## 6. Inline on live traffic with a sub-millisecond budget
+
+I would first move redaction off the request path if at all possible: copy the traffic to a queue
+and redact it asynchronously, so a slow line can never delay a user. If it really must be inline,
+I'd change four things. **Language:** a compiled language like Go, with no interpreter overhead.
+**One pass instead of many:** today every string is scanned once per value rule; I'd combine all
+patterns into a single automaton (RE2 sets or Hyperscan) and check key names with one hash lookup.
+**No full parse and re-serialize:** a streaming tokenizer that copies the original bytes and only
+rewrites the matched spans, with no allocations per request. **A hard budget:** cap the body size
+that gets scanned and skip known binary content types, and decide up front what happens when the
+budget runs out (for a security product, drop or mask the body rather than pass it through).
+Then measure p99 latency on realistic traffic, not the average.
