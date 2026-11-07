@@ -373,3 +373,21 @@ def test_kubernetes_configmap_has_the_same_rules_as_rules_yaml():
     configmap = next(o for o in objects if o["kind"] == "ConfigMap")
     with open("rules.yaml") as f:
         assert configmap["data"]["rules.yaml"] == f.read()
+
+
+# ---- Secrets in free text ----
+
+
+def test_password_in_free_text_is_masked():
+    result = redact({"body": {"debug": "login attempt password=hunter2 for user=zed"}})
+    assert result["body"]["debug"] == "login attempt **** for user=zed"
+
+
+def test_secret_with_colon_in_free_text_is_masked():
+    result = redact({"body": "reset done, Secret: abc123 sent"})
+    assert result["body"] == "reset done, **** sent"
+
+
+def test_secret_name_without_a_value_is_not_masked():
+    note = "please rotate the token soon"
+    assert redact({"body": {"note": note}})["body"]["note"] == note

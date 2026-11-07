@@ -164,7 +164,7 @@ manifest on a real cluster.
 | About 10% of random numbers pass Luhn, so some 13-19 digit IDs get redacted. This errs on the safe side, on purpose. | Also require a known card prefix (BIN range), or a card-like key or word nearby. |
 | A card followed by more digits (`4111 1111 1111 1111 123`) is matched as one number, fails Luhn and stays visible. Only one space or dash between digits. | When a match fails Luhn, also try the shorter matches inside it. |
 | Value rules only scan strings. A card stored as a JSON number under an unknown key name is not found. | Also scan integers of 13-19 digits. |
-| `password: hunter2` inside free text is not caught (key rules need a key/value structure). | Value rules for `name: value` / `name=value` patterns of secret key names. |
+| Secrets in free text are caught only as `name=value` / `name: value` with a known name (`secret-in-text` rule, added for input line 41). The name is masked too, and `my secret is hunter2` is missed. | Keep the name and mask only the value; a wider list of names. |
 | JSON and form detection only applies to `body` fields and the query string, not to other strings. | Try it on every string that starts with `{` or `[`, measuring the cost. |
 | The `settings` block in `rules.yaml` is not read; `****`, keep 4 and `*` are constants with the same values. | Read them in `load_rules`. |
 | A single very long line is loaded into memory as a whole. | A maximum line size; longer lines get a placeholder. |

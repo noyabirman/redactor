@@ -63,6 +63,13 @@ value_rules:
     validator: luhn
     action: partial
 
+  # A secret written inside free text, e.g. "login attempt password=hunter2".
+  # Key rules can't see it (it's not a key), so we match "name=value" or "name: value".
+  # The whole match is masked, including the name.
+  - name: secret-in-text
+    pattern: '(?i)\b(?:password|passwd|pwd|secret|client_secret|token)\s*[:=]\s*[^\s&,;"]+'
+    action: mask
+
   - name: api-key-prefix
     pattern: '\bsk_(?:live|test)_[A-Za-z0-9]+\b'
     action: mask
