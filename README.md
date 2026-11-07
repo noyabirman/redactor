@@ -3,8 +3,8 @@
 Reads API traffic logs (NDJSON, one HTTP transaction per line), redacts sensitive data according to `rules.yaml`, and writes the same NDJSON to stdout.
 
 **Language: Python 3.12.** 
-Go is completely new to me, and the brief allows another language. so I decided to implement with Python.
-By thefried, in that case. The only dependencies are `pyyaml` (rules file) and `pytest` (tests).
+Go is completely new to me, and the brief allows another language in that case, so I chose Python.
+The only dependencies are `pyyaml` (rules file) and `pytest` (tests).
 
 ## 1. Build, run and test
 
