@@ -26,6 +26,13 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **Chunked uploads (no Content-Length) are rejected with 411, not supported.** The body is already streamed line by line, which is what the brief asks; time went to deployment files instead. Limitation: the 411 is sent without reading the body, so a client still sending may see a connection reset instead of the 411.
 - **The response status (200) is sent before the body is read,** so a bad line can't change it later; bad lines get the usual placeholder.
 
+## Deployment
+- **Base image `python:3.12.7-slim-bookworm`, pinned to an exact version.** Small, well known, has a shell for debugging. Distroless would be smaller and safer but harder to debug and explain.
+- **Runs as a non-root user (uid 10001).** If someone breaks in through the app, they aren't root in the container.
+- **`requirements.txt` (pyyaml) for the image, `requirements-dev.txt` (+ pytest) for development.** The image only has what it needs to run.
+- **Dependencies are installed before the code is copied,** so changing `redactor.py` doesn't reinstall them (Docker layer cache).
+- **Default `rules.yaml` is in the image at `/etc/redactor/rules.yaml`;** in Kubernetes a ConfigMap replaces it, so rules change without rebuilding the image.
+
 ## Bad lines
 - **A line that can't be parsed becomes a placeholder:** `{"_redactor_error":"invalid_json","line":20}`. Printing it as-is could leak data (line 20 has a truncated JWT, line 50 an email); dropping it silently hides the problem. The line number lets you find it in the original file. (Input lines 20, 21, 50.)
 - **Blank lines are skipped** (lines 19, 22), as is usual for NDJSON.

@@ -12,7 +12,7 @@ The only dependencies are `pyyaml` (rules file) and `pytest` (tests).
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # pyyaml + pytest (requirements.txt has only pyyaml)
 ```
 
 ### CLI

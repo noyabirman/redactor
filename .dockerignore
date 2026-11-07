@@ -1,0 +1,9 @@
+# Only redactor.py, requirements.txt and rules.yaml are needed in the image.
+.git
+.venv
+__pycache__
+.pytest_cache
+tests
+*.md
+input.ndjson
+download
