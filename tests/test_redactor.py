@@ -294,3 +294,22 @@ def test_cli_output_is_idempotent_on_sample_input():
     once = run_cli("input.ndjson").stdout
     twice = run_cli(stdin=once).stdout
     assert once == twice
+
+
+# ---- Query string in the path ----
+
+
+def test_query_string_in_path_is_redacted():
+    path = "/v1/reset?token=abc123def456&email=gina%40example.com&lang=en"
+    result = redact({"path": path})["path"]
+    assert result.startswith("/v1/reset?token=****&email=sha256:")
+    assert "gina" not in result
+    assert result.endswith("&lang=en")
+
+
+def test_path_without_query_string_is_unchanged():
+    assert redact({"path": "/v1/users/42"})["path"] == "/v1/users/42"
+
+
+def test_query_string_redaction_is_idempotent():
+    assert_idempotent({"path": "/v1/reset?token=abc&email=gina%40example.com"})

@@ -324,6 +324,19 @@ def redact_form(body, rules, counts):
     return "&".join(result)
 
 
+def redact_path(path, rules, counts):
+    """Redact a request path, including its query string.
+
+    "/v1/reset?token=abc&email=gina%40example.com" -> the query part is
+    handled like a form body, so key rules (token) and URL-decoding work.
+    """
+    base, question_mark, query = path.partition("?")
+    base = apply_value_rules(base, rules, counts)
+    if question_mark and FORM_RE.fullmatch(query):
+        return base + "?" + redact_form(query, rules, counts)
+    return base + question_mark + apply_value_rules(query, rules, counts)
+
+
 def redact_record(record, rules, counts):
     """Redact one parsed line, using the right scope for each part of it."""
     if not isinstance(record, dict):
@@ -336,6 +349,8 @@ def redact_record(record, rules, counts):
             result[key] = redact_value(item, "headers", rules, counts)
         elif key == "body":
             result[key] = redact_body(item, rules, counts)
+        elif key == "path" and isinstance(item, str):
+            result[key] = redact_path(item, rules, counts)
         elif key == "response" and isinstance(item, dict):
             # The response has its own headers and body.
             result[key] = redact_record(item, rules, counts)

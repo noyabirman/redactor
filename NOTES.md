@@ -53,4 +53,5 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **JSON inside a string** (lines 1, 10, 11) is parsed, fully redacted (key rules too) and written back as a string, keeping the field's type.
 - **Form-encoded** (line 8) is decoded first (`%40` -> `@`), key rules on names, value rules on values. Unchanged pairs are kept exactly as they were.
 - **Anything else** (plain text, HTML, binary-looking, lines 9, 17, 31, 42) gets value rules only.
+- **Query string in `path` is redacted like a form body** (`?token=...&email=gina%40...`). Query parameters are request data, so `scope: body` rules apply to them. Before this fix the token and the URL-encoded email leaked.
 - **Limitations:** only `body` fields get this treatment; `password: hunter2` inside free text isn't caught; base64 with `=` padding looks like a form (harmless, nothing changes).
