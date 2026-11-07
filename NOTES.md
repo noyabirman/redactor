@@ -5,6 +5,7 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 ## General
 - **README follows the order of the brief's README section,** so reviewers can check each requirement easily.
 - **Python, not Go.** Go is new to me; the brief allows another language if stated in the README.
+- **Recursion, not an explicit stack.** Shorter and easier to read; the ~1000-level limit is handled with a `too_deep` placeholder.
 - **Read input as bytes, line by line.** Invalid UTF-8 can't crash the decoder, and memory is O(longest line), not O(file). Time is O(input size x number of rules).
 
 ## Rules file
