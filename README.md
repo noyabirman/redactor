@@ -70,3 +70,29 @@ The rule everywhere: **if we're not sure a value is safe, it doesn't go out.**
   The line number points to the original line.
 - **Unexpected error** in redaction -> placeholder `internal_error`, and the run continues.
 - **stderr** only ever gets line numbers, reasons and error types, never content.
+
+## 3. The JWT report
+
+**What I found.** The `jwt` pattern in the provided `rules.yaml` only allowed base64 characters:
+```
+eyJ[A-Za-z0-9+/=]+\.[A-Za-z0-9+/=]+\.[A-Za-z0-9+/=]*
+```
+But JWTs use **base64url** (RFC 7515), where the special characters are `-` and `_`, not `+` and `/`.
+So any JWT containing `-` or `_` was handled wrongly, in two ways:
+- **Missed completely** when `-`/`_` is in the header or payload: `access_token` in a response body
+  (input line 11) and a token inside a log message (line 16) came out in full.
+- **Cut in the middle** when `_` is in the signature: the regex stopped at the `_`, so the output was
+  `****_adQssw5c`, leaking the end of the signature (line 15, `id_token` and `note`). This is the worse
+  case, because the field looks redacted.
+
+JWTs in `Authorization` headers were masked anyway by the `auth-headers` key rule, which is probably
+why the problem was only noticed in production samples with tokens in bodies and free text.
+
+**What I did.** Added `-` and `_` to all three parts of the pattern, and kept `+/=` in case a
+non-standard token uses plain base64:
+```
+eyJ[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]*
+```
+**How I checked.** I wrote the tests first and they failed on the old pattern
+(`'****_adQssw5c' == '****'`). They pass with the new one. On `input.ndjson` the `jwt` count went
+from 2 to 4, and the output contains no `eyJ` at all.

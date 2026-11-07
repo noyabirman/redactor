@@ -12,7 +12,7 @@ Raw notes, one line per decision. They will be moved into README.md and this fil
 - **Rules are loaded and checked before reading any input (fail closed).** Missing file, bad YAML, unknown action/scope/validator or a broken regex -> exit code 2 and nothing on stdout. Traffic is never passed through unredacted.
 - **`yaml.safe_load`, not `yaml.load`.** It only builds plain types, so a malicious rules file can't create Python objects.
 - **Regexes are compiled once at load time.** Faster, and a broken regex is caught before any output.
-- **Fixed the `jwt` pattern (the "known issue").** JWTs use base64url (`-` and `_`), but the pattern only allowed base64 (`+`, `/`, `=`). JWTs with `-`/`_` were missed (input lines 11, 16) or cut in the middle, leaking the end of the signature (`****_adQssw5c`, line 15). Added `-` and `_`, kept `+/=`.
+- **Fixed the `jwt` pattern (the "known issue").** JWTs use base64url (`-` and `_`), but the pattern only allowed base64 (`+`, `/`, `=`). JWTs with `-`/`_` were missed (input lines 11, 16) or cut in the middle, leaking the end of the signature (`****_adQssw5c`, line 15). Added `-` and `_`, kept `+/=`. JWTs in `Authorization` headers were masked anyway by the `auth-headers` key rule, which is likely why only tokens in bodies and free text were reported.
 - **Card pattern allows one space or dash between digits** (`4111 1111 1111 1111`, `5555-5555-5555-4444`). Luhn still filters random numbers.
 - **The `settings` block in rules.yaml is not read yet.** `****`, keep 4 and `*` are constants in the code (same values). To do.
 
