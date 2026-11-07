@@ -87,6 +87,18 @@ The rule everywhere: **if we're not sure a value is safe, it doesn't go out.**
 - **Unexpected error** in redaction -> placeholder `internal_error`, and the run continues.
 - **stderr** only ever gets line numbers, reasons and error types, never content.
 
+### Smaller decisions
+- The rules file is read with `yaml.safe_load`, which only builds plain types, so a malicious file can't create Python objects.
+- Blank lines are skipped (input lines 19, 22), as usual for NDJSON.
+- Valid JSON that isn't an object (`42`, `["a@b.com"]`, lines 23-24) is still redacted, not rejected.
+- A key rule on `null` keeps `null`: there's nothing to hide.
+- Redacted numbers become strings: `"card_number": 4111111111111111` -> `"************1111"` (line 28).
+- `partial` on a value of 4 characters or fewer masks all of it, otherwise a short value like a CVV would stay fully visible.
+- Counts are added to the summary only if the whole line succeeds, so a failed line leaves no partial counts.
+- In service mode the `200` status is sent before the body is read (that's what streaming means), so a bad line
+  later can't change it; it gets the usual placeholder inside the output.
+- In Python `\d` also matches non-Latin digits (e.g. Arabic-Indic). Harmless here; Luhn only counts 0-9.
+
 ## 3. The JWT report
 
 **What I found.** The `jwt` pattern in the provided `rules.yaml` only allowed base64 characters:
