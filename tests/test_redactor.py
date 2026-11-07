@@ -48,3 +48,32 @@ def test_jwt_signature_is_masked_completely_without_leaking_a_tail():
 
 def test_jwt_redaction_is_idempotent():
     assert_idempotent({"body": {"msg": f"a {JWT_WITH_DASH_AND_UNDERSCORE} b"}})
+
+
+# ---- Credit cards ----
+# Synthetic test card numbers that pass Luhn.
+
+
+def test_card_with_spaces_is_redacted():
+    result = redact({"body": {"note": "card 4111 1111 1111 1111 on file"}})
+    assert result["body"]["note"] == "card ***************1111 on file"
+
+
+def test_card_with_dashes_is_redacted():
+    result = redact({"body": {"note": "paid with 5555-5555-5555-4444"}})
+    assert result["body"]["note"] == "paid with ***************4444"
+
+
+def test_card_without_separators_is_redacted():
+    result = redact({"body": {"note": "card 4111111111111111"}})
+    assert result["body"]["note"] == "card ************1111"
+
+
+def test_number_that_fails_luhn_is_not_redacted():
+    # Looks like a card, but the checksum is wrong, so it's just a number.
+    for note in ["ref 1234 5678 9012 3456", "order 4111111111111112"]:
+        assert redact({"body": {"note": note}})["body"]["note"] == note
+
+
+def test_card_redaction_is_idempotent():
+    assert_idempotent({"body": {"note": "a 4111 1111 1111 1111 b 5555-5555-5555-4444"}})
