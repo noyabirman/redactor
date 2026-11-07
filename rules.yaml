@@ -48,7 +48,11 @@ value_rules:
     action: hash
 
   - name: jwt
-    pattern: 'eyJ[A-Za-z0-9+/=]+\.[A-Za-z0-9+/=]+\.[A-Za-z0-9+/=]*'
+    # JWTs use base64url (RFC 7515), whose special characters are "-" and "_",
+    # not "+" and "/". The original pattern missed JWTs containing "-" or "_",
+    # and cut some off in the middle, leaking the end of the signature.
+    # "+/=" are kept in case a non-standard token uses plain base64.
+    pattern: 'eyJ[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]+\.[A-Za-z0-9_+/=-]*'
     action: mask
 
   - name: credit-card
