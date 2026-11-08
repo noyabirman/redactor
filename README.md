@@ -161,8 +161,10 @@ manifest on a real cluster.
 | Limitation | With more time |
 |---|---|
 | `hash` is plain SHA-256, so known values (e.g. a list of emails) can be hashed and compared. | HMAC-SHA-256 with a secret key from a Kubernetes Secret. |
+| `hash` skips any value starting with `sha256:` (for idempotency), so a secret like `sha256:my-secret` under a hashed key passes through unchanged. | Skip only an exact `sha256:` + 64 hex characters. |
 | About 10% of random numbers pass Luhn, so some 13-19 digit IDs get redacted. This errs on the safe side, on purpose. | Also require a known card prefix (BIN range), or a card-like key or word nearby. |
 | A card followed by more digits (`4111 1111 1111 1111 123`) is matched as one number, fails Luhn and stays visible. Only one space or dash between digits. | When a match fails Luhn, also try the shorter matches inside it. |
+| A card glued to letters (`card4111111111111111`) is not found, because `\b` needs a non-word character before the digits. | Use digit-only boundaries, but check they don't match digit runs inside hashes. |
 | Value rules only scan strings. A card stored as a JSON number under an unknown key name is not found. | Also scan integers of 13-19 digits. |
 | Secrets in free text are caught only as `name=value` / `name: value` with a known name (`secret-in-text` rule, added for input line 41). The name is masked too, and `my secret is hunter2` is missed. | Keep the name and mask only the value; a wider list of names. |
 | JSON and form detection only applies to `body` fields and the query string, not to other strings. | Try it on every string that starts with `{` or `[`, measuring the cost. |
